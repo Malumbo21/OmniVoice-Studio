@@ -94,6 +94,8 @@ jobs:
       VOICESTUDIO_RUST_TARGET: ${{ matrix.target }}
       VOICESTUDIO_UPDATE_CHANNEL: electron-stable-${{ matrix.platform }}-${{ matrix.arch }}
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      VITE_POSTHOG_KEY: ${{ secrets.POSTHOG_PROJECT_TOKEN }}
+      VITE_POSTHOG_HOST: ${{ vars.POSTHOG_HOST }}
     steps:
       - uses: actions/checkout@v4
         with:
