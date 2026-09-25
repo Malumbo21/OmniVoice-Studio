@@ -119,7 +119,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libxdo-dev libxtst-dev libx11-dev libxkbcommon-dev libwayland-dev libssl-dev pkg-config xvfb
+          sudo apt-get install -y libasound2-dev libxdo-dev libxtst-dev libx11-dev libxkbcommon-dev libwayland-dev libssl-dev pkg-config xvfb zsync
       - name: Bundle pinned uv for the host architecture
         run: |
           node --input-type=module <<'NODE'
@@ -142,16 +142,29 @@ jobs:
         run: bun run check:electron
       - name: Package without publishing
         env:
-          CSC_LINK: ${{ secrets.ELECTRON_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.ELECTRON_CSC_KEY_PASSWORD }}
+          CSC_LINK: ${{ matrix.platform == 'darwin' && secrets.ELECTRON_MACOS_CSC_LINK || matrix.platform == 'win32' && secrets.ELECTRON_WINDOWS_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ matrix.platform == 'darwin' && secrets.ELECTRON_MACOS_CSC_KEY_PASSWORD || matrix.platform == 'win32' && secrets.ELECTRON_WINDOWS_CSC_KEY_PASSWORD || '' }}
+          APPLE_ID: ${{ matrix.platform == 'darwin' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.platform == 'darwin' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ matrix.platform == 'darwin' && secrets.APPLE_TEAM_ID || '' }}
+          PUBLISH: ${{ inputs.publish }}
+          ALLOW_UNSIGNED: ${{ inputs.allow_unsigned }}
         working-directory: electron
         run: |
+          if [ "${{ matrix.platform }}" = darwin ] && [ "$PUBLISH" = true ] && [ "$ALLOW_UNSIGNED" != true ]; then
+            if [ -z "${CSC_LINK:-}" ] || [ -z "${CSC_KEY_PASSWORD:-}" ] || [ -z "${APPLE_ID:-}" ] || [ -z "${APPLE_APP_SPECIFIC_PASSWORD:-}" ] || [ -z "${APPLE_TEAM_ID:-}" ]; then
+              echo "Signed macOS publication requires Developer ID and Apple notarization credentials"; exit 1
+            fi
+          fi
           # An empty CSC_LINK is interpreted as the working directory by the
           # signer. Omit absent credentials rather than passing empty strings.
           if [ -z "${CSC_LINK:-}" ]; then
             unset CSC_LINK CSC_KEY_PASSWORD
           fi
           bun x electron-builder --config electron-builder.config.mjs ${{ matrix.flags }} --publish never
+          if [ "$RUNNER_OS" = Linux ]; then
+            node scripts/embed-appimage-update.mjs
+          fi
           node tests/packaging-contract.mjs --artifact
           node tests/update-package-contract.mjs --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
       - name: Verify macOS signing and notarization before publication
@@ -161,6 +174,7 @@ jobs:
           test -n "$APP"
           codesign --verify --deep --strict "$APP"
           spctl --assess --type execute --verbose=2 "$APP"
+          xcrun stapler validate "$APP"
       - name: Verify Windows installer signature before publication
         if: inputs.publish == true && inputs.allow_unsigned != true && matrix.platform == 'win32'
         shell: pwsh
@@ -175,7 +189,9 @@ jobs:
         working-directory: electron
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
-            xvfb-run -a node tests/packaged-smoke.mjs --setup
+            for image in release/VoiceStudio-Electron-*-linux-x64.AppImage; do
+              VOICESTUDIO_PACKAGED_EXE="electron/$image" xvfb-run -a node tests/packaged-smoke.mjs --setup
+            done
           else
             node tests/packaged-smoke.mjs --setup
           fi
